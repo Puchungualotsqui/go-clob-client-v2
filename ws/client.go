@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"time"
 )
 
 const DefaultEndpoint = "wss://ws-subscriptions-clob.polymarket.com"
@@ -37,10 +38,19 @@ type SubscriptionRequest struct {
 }
 
 // Message retains the complete event JSON so callers can decode event-specific
-// fields without losing precision or forward-compatible fields.
+// fields without losing precision or forward-compatible fields. Metadata is set
+// only on stream-delivered messages, not by ParseMessages.
 type Message struct {
 	EventType string
 	Raw       json.RawMessage
+	// ConnectionID identifies the physical connection within this process, until
+	// the uint64 counter wraps. It is not stable across process restarts.
+	ConnectionID uint64 `json:"-"`
+	// Generation is the group's successful full-subscription-write generation.
+	Generation uint64 `json:"-"`
+	// ReceivedAt is the local time the complete WebSocket message was read,
+	// before parsing or routing. Events in one batch share the same timestamp.
+	ReceivedAt time.Time `json:"-"`
 }
 
 // Decode unmarshals the complete event into an event-specific value.
@@ -211,6 +221,113 @@ func routingMarketID(raw json.RawMessage) (string, error) {
 	return "0x" + strings.ToLower(strings.TrimPrefix(s, "0x")), nil
 }
 
+func knownMarketEvent(eventType string) bool {
+	switch eventType {
+	case "book", "price_change", "tick_size_change", "last_trade_price", "best_bid_ask", "new_market", "market_resolved":
+		return true
+	default:
+		return false
+	}
+}
+
+// marketRoutingIDs is shared by strict validation and permissive routing so
+// that validation cannot approve a frame that the router would reject.
+func marketRoutingIDs(m Message, strict bool) ([]string, error) {
+	var event map[string]json.RawMessage
+	if err := json.Unmarshal(m.Raw, &event); err != nil {
+		return nil, fmt.Errorf("%s: %w", m.EventType, err)
+	}
+	rawIDs := []json.RawMessage{event["asset_id"]}
+	for _, key := range []string{"assets_ids", "asset_ids"} {
+		var list []json.RawMessage
+		if raw := event[key]; len(raw) > 0 {
+			if err := json.Unmarshal(raw, &list); err != nil {
+				return nil, fmt.Errorf("%s: %s: %w", m.EventType, key, err)
+			}
+		}
+		if strict {
+			for _, raw := range list {
+				if isNull(raw) {
+					return nil, fmt.Errorf("%s: %s: null asset ID", m.EventType, key)
+				}
+			}
+		}
+		rawIDs = append(rawIDs, list...)
+	}
+	var changes []map[string]json.RawMessage
+	if raw := event["price_changes"]; len(raw) > 0 {
+		if err := json.Unmarshal(raw, &changes); err != nil {
+			return nil, fmt.Errorf("%s: price_changes: %w", m.EventType, err)
+		}
+	}
+	for _, change := range changes {
+		raw := change["asset_id"]
+		if strict && (len(raw) == 0 || isNull(raw)) {
+			return nil, fmt.Errorf("%s: price_changes entry missing asset_id", m.EventType)
+		}
+		rawIDs = append(rawIDs, raw)
+	}
+	ids := make([]string, 0, len(rawIDs))
+	for _, raw := range rawIDs {
+		if len(raw) == 0 || isNull(raw) {
+			continue
+		}
+		if strict && len(raw) > 0 && raw[0] == '"' {
+			var text string
+			if err := json.Unmarshal(raw, &text); err == nil && text == "" {
+				return nil, fmt.Errorf("%s: empty asset ID", m.EventType)
+			}
+		}
+		id, err := routingAssetID(raw)
+		if err != nil {
+			return nil, fmt.Errorf("%s: asset_id: %w", m.EventType, err)
+		}
+		if strict && id == "" {
+			return nil, fmt.Errorf("%s: empty asset ID", m.EventType)
+		}
+		ids = append(ids, id)
+	}
+	if strict && len(ids) == 0 {
+		return nil, fmt.Errorf("%s: no routing asset ID", m.EventType)
+	}
+	return ids, nil
+}
+
+// strictMarketMessages validates the entire WebSocket message before routing.
+func strictMarketMessages(data []byte) ([]Message, error) {
+	data = bytes.Trim(data, " \t\r\n")
+	if len(data) == 0 {
+		return nil, errors.New("empty market message")
+	}
+	if err := validateStrictJSON(data); err != nil {
+		return nil, err
+	}
+	messages, err := ParseMessages(data)
+	if err != nil {
+		return nil, err
+	}
+	count := 1
+	if data[0] == '[' {
+		var elements []json.RawMessage
+		if err := json.Unmarshal(data, &elements); err != nil {
+			return nil, err
+		}
+		count = len(elements)
+	}
+	if len(messages) != count {
+		return nil, errors.New("market event missing event_type")
+	}
+	for i, m := range messages {
+		if !knownMarketEvent(m.EventType) {
+			return nil, fmt.Errorf("market event %d: unknown event_type", i)
+		}
+		if _, err := marketRoutingIDs(m, true); err != nil {
+			return nil, fmt.Errorf("market event %d: %w", i, err)
+		}
+	}
+	return messages, nil
+}
+
 func marketParser(ids []string) func([]byte) ([]Message, error) {
 	set := make(map[string]bool, len(ids))
 	for _, id := range ids {
@@ -226,44 +343,15 @@ func marketParser(ids []string) func([]byte) ([]Message, error) {
 		}
 		out := messages[:0]
 		for _, m := range messages {
-			switch m.EventType {
-			case "book", "price_change", "tick_size_change", "last_trade_price", "best_bid_ask", "new_market", "market_resolved":
-			default:
+			if !knownMarketEvent(m.EventType) {
 				continue
 			}
-			// Map lookups keep routing keys case-sensitive, unlike struct decoding.
-			var event map[string]json.RawMessage
-			if err := json.Unmarshal(m.Raw, &event); err != nil {
-				return nil, fmt.Errorf("%s: %w", m.EventType, err)
-			}
-			ids := []json.RawMessage{event["asset_id"]}
-			for _, key := range []string{"assets_ids", "asset_ids"} {
-				var list []json.RawMessage
-				if raw := event[key]; len(raw) > 0 {
-					if err := json.Unmarshal(raw, &list); err != nil {
-						return nil, fmt.Errorf("%s: %s: %w", m.EventType, key, err)
-					}
-				}
-				ids = append(ids, list...)
-			}
-			var changes []map[string]json.RawMessage
-			if raw := event["price_changes"]; len(raw) > 0 {
-				if err := json.Unmarshal(raw, &changes); err != nil {
-					return nil, fmt.Errorf("%s: price_changes: %w", m.EventType, err)
-				}
-			}
-			for _, change := range changes {
-				ids = append(ids, change["asset_id"])
+			ids, err := marketRoutingIDs(m, false)
+			if err != nil {
+				return nil, err
 			}
 			matched := false
-			for _, raw := range ids {
-				if len(raw) == 0 || isNull(raw) {
-					continue
-				}
-				id, err := routingAssetID(raw)
-				if err != nil {
-					return nil, fmt.Errorf("%s: asset_id: %w", m.EventType, err)
-				}
+			for _, id := range ids {
 				matched = matched || set[id]
 			}
 			if matched {
