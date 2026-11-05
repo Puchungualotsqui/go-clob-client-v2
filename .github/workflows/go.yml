@@ -1,0 +1,70 @@
+name: Go CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go ${{ matrix.go }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        go: ['1.24.x', 'stable']
+    env:
+      GOTOOLCHAIN: local
+      GOWORK: 'off'
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+          cache-dependency-path: go.sum
+      - name: Check formatting
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [[ -n "$unformatted" ]]; then
+            echo "Go files requiring gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+      - name: Check module dependencies
+        run: go mod tidy -diff
+      - name: Vet
+        run: go vet ./...
+      - name: Test with race detector
+        run: go test -race ./...
+      - name: Build
+        run: go build ./...
+      - name: Test a clean consumer
+        shell: bash
+        run: |
+          consumer="${RUNNER_TEMP}/go-clob-consumer"
+          mkdir -p "$consumer"
+          cd "$consumer"
+          go mod init example.com/consumer
+          go mod edit -go=1.24.0 -require=github.com/puchungualotsqui/go-clob-client-v2@v0.0.0
+          go mod edit "-replace=github.com/puchungualotsqui/go-clob-client-v2=${GITHUB_WORKSPACE}"
+          cat > consumer_test.go <<'EOF'
+          package consumer
+
+          import (
+              _ "github.com/puchungualotsqui/go-clob-client-v2"
+              _ "github.com/puchungualotsqui/go-clob-client-v2/bridge"
+              _ "github.com/puchungualotsqui/go-clob-client-v2/ctf"
+              _ "github.com/puchungualotsqui/go-clob-client-v2/data"
+              _ "github.com/puchungualotsqui/go-clob-client-v2/gamma"
+              _ "github.com/puchungualotsqui/go-clob-client-v2/rtds"
+              _ "github.com/puchungualotsqui/go-clob-client-v2/ws"
+          )
+          EOF
+          go mod tidy
+          go test -mod=readonly ./...

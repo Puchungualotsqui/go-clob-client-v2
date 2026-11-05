@@ -1,0 +1,13 @@
+{
+  "schema": 1,
+  "public_private_key": "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+  "hmac": [
+    {"name":"rust_upstream", "secret":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", "timestamp":1000000, "method":"test-sign", "path":"/orders", "body":"{\"hash\":\"0x123\"}", "message":"1000000test-sign/orders{\"hash\":\"0x123\"}", "signature":"4gJVbox-R6XlDK4nlaicig0_ANVL1qdcahiL8CXfXLM="},
+    {"name":"get", "secret":"cHVibGljLXRlc3Qtc2VjcmV0", "timestamp":1700000000, "method":"GET", "path":"/orders", "body":"", "message":"1700000000GET/orders", "signature":"lLhjk4nTa-16fdNKX-lpYXPzAOE0DGzmwRgGt42PtJI="},
+    {"name":"post", "secret":"cHVibGljLXRlc3Qtc2VjcmV0", "timestamp":1700000001, "method":"POST", "path":"/order", "body":"{\"tokenId\":\"1234\",\"side\":\"BUY\"}", "message":"1700000001POST/order{\"tokenId\":\"1234\",\"side\":\"BUY\"}", "signature":"CBXZVfxoq0yPHz9Vqole6_spNTRWhnyJ4H7xVFxEXU8="}
+  ],
+  "orders": [
+    {"name":"polygon_buy", "version":2, "chain_id":137, "neg_risk":false, "exchange":"0xE111180000d2663C0091e4f400237545B87B996B", "salt":479249096354, "maker":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "signer":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "token_id":"1234", "maker_amount":"100000000", "taker_amount":"50000000", "side":0, "signature_type":0, "timestamp":"1710000000000", "expiration":"0", "metadata":"0x0000000000000000000000000000000000000000000000000000000000000000", "builder":"0x0000000000000000000000000000000000000000000000000000000000000000", "digest":"0x10124949f84e9f7438c88d02bfd546ceb27ed6eb1fdb0175137af535b6e2513d", "signature":"0x42c7b4857d51e344045fcfde17b37cf1290d784471ffe618c22aa56ea5ddcf0009015b87ffb299813f5597e86d4ad56f40d634558d915edb719e6fc71dbc0d891c"},
+    {"name":"amoy_sell_neg_risk", "version":2, "chain_id":80002, "neg_risk":true, "exchange":"0xe2222d279d744050d28e00520010520000310F59", "salt":42, "maker":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "signer":"0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266", "token_id":"123456789012345678901234567890", "maker_amount":"9876543", "taker_amount":"1234567", "side":1, "signature_type":0, "timestamp":"1710000000001", "expiration":"1800000000", "metadata":"0x1111111111111111111111111111111111111111111111111111111111111111", "builder":"0x2222222222222222222222222222222222222222222222222222222222222222", "digest":"0xed4e2bb64f761a5725d1e2016d25b7e38347935b065cebaca2f927b5fd4896b0", "signature":"0xca369dd7fee91f48658a5f9726829d6be146cd15a23672fb4a6685b890f9ab164386e8e7a9c058c8777b1c5a5a8268941a72521383ca290226e5248e1bcf2b051b"}
+  ]
+}
